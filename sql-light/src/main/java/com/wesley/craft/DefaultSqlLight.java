@@ -6,6 +6,8 @@ import cn.hutool.db.handler.EntityListHandler;
 import cn.hutool.db.sql.SqlExecutor;
 import com.wesley.craft.model.SqlDataset;
 import com.wesley.craft.model.SqlDatasetField;
+import com.wesley.craft.model.SqlDatasetResult;
+import com.wesley.craft.support.SqlNamedParam;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -43,11 +45,16 @@ public class DefaultSqlLight implements SqlLight {
         }
     }
 
-    public void query(Connection conn, int groupId, String mainDsName, Object primaryValue) {
+    @Override
+    public Map<String,SqlDatasetResult> query(Connection conn, int groupId, String mainDsName, Object primaryValue) {
+        return this.query(conn, groupId, mainDsName, primaryValue, new HashMap<>());
+    }
+
+    @Override
+    public Map<String, SqlDatasetResult> query(Connection conn, int groupId, String mainDsName, Object primaryValue, Map<String, Object> params) {
         List<SqlDataset> sqlDatasets = datasetMap.get(groupId);
         if (sqlDatasets == null || sqlDatasets.isEmpty()) {
-            // todo 抛出异常
-            return;
+            throw new IllegalArgumentException("groupId 未找到数据集");
         }
 
         // 主数据集
@@ -66,10 +73,11 @@ public class DefaultSqlLight implements SqlLight {
             }
         }
         buildSubDataset(mainDataset, untidyDataset);
-
-        // TODO: 2024/10/11 处理返回值
-        query(conn, mainDataset, primaryValue);
-
+        DatasetQueryParam queryParam = new DatasetQueryParam(conn, mainDataset, primaryValue);
+        queryParam.paramMap = params;
+        Map<String,SqlDatasetResult> resultMap = new HashMap<>();
+        this.query(queryParam, resultMap);
+        return resultMap;
     }
 
     private void buildSubDataset(SqlDataset parentDataset, List<SqlDataset> sqlDatasets) {
@@ -92,11 +100,21 @@ public class DefaultSqlLight implements SqlLight {
         }
     }
 
-    protected void query(Connection coon, SqlDataset parentDataset, Object primaryValue) {
-        String mainSql = parentDataset.getMainSql();
+    protected void query(DatasetQueryParam queryParam, Map<String, SqlDatasetResult> resultMap) {
+        SqlDataset parentDataset = queryParam.parentDataset;
+        String mainSql = queryParam.getSql();
         try {
-            List<Entity> dsList = SqlExecutor.query(coon, mainSql, new EntityListHandler(), primaryValue);
+            List<Entity> dsList = SqlExecutor.query(queryParam.coon, mainSql, new EntityListHandler(), queryParam.paramList.toArray());
             System.out.println(dsList.size());
+            SqlDatasetResult result = new SqlDatasetResult();
+            result.setName(parentDataset.getName());
+            if (CollUtil.isNotEmpty(dsList)) {
+                // TODO: 2024/10/15 字段配置参数处理
+                List<Map<String, Object>> values = new ArrayList<>(dsList.size());
+                values.addAll(dsList);
+                result.setValues(values);
+                resultMap.put(parentDataset.getName(), result);
+            }
 
             List<SqlDataset> subDatasets = parentDataset.getSubDatasets();
             if (CollUtil.isEmpty(subDatasets) || CollUtil.isEmpty(dsList)) {
@@ -104,9 +122,12 @@ public class DefaultSqlLight implements SqlLight {
             }
             Entity entity = dsList.get(0);
             for (SqlDataset subDataset : subDatasets) {
-                Object dependValue = entity.get(subDataset.getDependKey());
-                if (Objects.nonNull(dependValue)){
-                    query(coon, subDataset, dependValue);
+                List<Object> dependValues = dsList.stream().map(e -> e.get(subDataset.getDependKey()))
+                                                  .filter(Objects::nonNull).distinct().toList();
+                if (!dependValues.isEmpty()){
+                    DatasetQueryParam subParam = new DatasetQueryParam(queryParam.coon, subDataset, dependValues.get(0));
+                    subParam.paramMap = queryParam.paramMap;
+                    query(subParam, resultMap);
                 }
             }
         } catch (SQLException e) {
@@ -114,4 +135,27 @@ public class DefaultSqlLight implements SqlLight {
         }
     }
 
+    private static class DatasetQueryParam {
+        final Connection coon;
+        final SqlDataset parentDataset;
+        final List<Object> paramList = new ArrayList<>();
+        Map<String, Object> paramMap;
+
+
+        public DatasetQueryParam(Connection coon, SqlDataset parentDataset, Object primaryValue) {
+            this.coon = coon;
+            this.parentDataset = parentDataset;
+            this.paramList.add(primaryValue);
+        }
+
+        String getSql() {
+            String mainSql = parentDataset.getMainSql();
+            if (Objects.isNull(paramMap) || paramMap.isEmpty()) {
+                return mainSql;
+            }
+            // TODO: 2024/10/16 处理paramList多个值情况
+            final SqlNamedParam namedSql = new SqlNamedParam(mainSql, paramMap);
+            return namedSql.getSql();
+        }
+    }
 }

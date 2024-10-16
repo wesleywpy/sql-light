@@ -1,6 +1,9 @@
 package com.wesley.craft;
 
+import com.wesley.craft.model.SqlDatasetResult;
+
 import java.sql.Connection;
+import java.util.Map;
 
 /**
  * SqlLight
@@ -20,5 +23,8 @@ public interface SqlLight {
      * @author WesleyWong
      * @since 2024/10/11
      **/
-    void query(Connection conn, int groupId, String mainDsName, Object primaryValue);
+    Map<String,SqlDatasetResult> query(Connection conn, int groupId, String mainDsName, Object primaryValue);
+
+    Map<String,SqlDatasetResult> query(Connection conn, int groupId, String mainDsName, Object primaryValue, Map<String,Object> params);
+
 }
