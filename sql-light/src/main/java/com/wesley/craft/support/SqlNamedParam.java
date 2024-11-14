@@ -1,7 +1,6 @@
 package com.wesley.craft.support;
 
 import cn.hutool.core.map.MapUtil;
-import cn.hutool.core.text.StrBuilder;
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
 import lombok.Getter;
@@ -45,8 +44,8 @@ public class SqlNamedParam {
 
         final int len = namedSql.length();
 
-        final StrBuilder name = StrUtil.strBuilder();
-        final StrBuilder sqlBuilder = StrUtil.strBuilder();
+        final StringBuilder name = new StringBuilder();
+        final StringBuilder sqlBuilder = new StringBuilder();
         char c;
         Character nameStartChar = null;
         for (int i = 0; i < len; i++) {
@@ -88,7 +87,7 @@ public class SqlNamedParam {
      * @param sqlBuilder 结果SQL缓存
      * @param paramMap 变量map（非空）
      */
-    private void replaceVar(Character nameStartChar, StrBuilder name, StrBuilder sqlBuilder, Map<String, Object> paramMap){
+    private void replaceVar(Character nameStartChar, StringBuilder name, StringBuilder sqlBuilder, Map<String, Object> paramMap){
         if(name.isEmpty()){
             if(null != nameStartChar){
                 // 类似于:的情况，需要补上:
@@ -103,19 +102,21 @@ public class SqlNamedParam {
         if(paramMap.containsKey(nameStr)) {
             // 有变量对应值（值可以为null），替换占位符为?，变量值放入相应index位置
             final Object paramValue = paramMap.get(nameStr);
-            if(ArrayUtil.isArray(paramValue) && StrUtil.containsIgnoreCase(sqlBuilder, "in")){
-                // 可能为select in (xxx)语句，则拆分参数为多个参数，变成in (?,?,?)
-                final int length = ArrayUtil.length(paramValue);
-                for (int i = 0; i < length; i++) {
-                    if(0 != i){
-                        sqlBuilder.append(',');
+            if(ArrayUtil.isArray(paramValue)){
+                if (StrUtil.containsIgnoreCase(sqlBuilder, "in")){
+                    // 可能为select in (xxx)语句，则拆分参数为多个参数，变成in (?,?,?)
+                    final int length = ArrayUtil.length(paramValue);
+                    for (int i = 0; i < length; i++) {
+                        if(0 != i){
+                            sqlBuilder.append(',');
+                        }
+                        this.append(sqlBuilder, ArrayUtil.get(paramValue, i));
                     }
-//                    sqlBuilder.append('?');
-                    sqlBuilder.append(parseValue(ArrayUtil.get(paramValue, i)));
-//                    this.params.add();
+                }else {
+                    this.append(sqlBuilder, ArrayUtil.get(paramValue, 0));
                 }
             } else if(Objects.nonNull(paramValue)) {
-                sqlBuilder.append(parseValue(paramValue));
+                this.append(sqlBuilder, paramValue);
 //                this.params.add(paramValue);
             }
         } else {
@@ -124,18 +125,19 @@ public class SqlNamedParam {
         }
 
         //清空变量，表示此变量处理结束
-        name.clear();
+        name.setLength(0);
     }
 
-    private String parseValue(Object paramValue) {
+    private void append(StringBuilder sqlBuilder, Object paramValue) {
         if (paramValue instanceof String){
-            return "'" + paramValue + "'";
+            sqlBuilder.append("'").append(paramValue).append("'");
         }
         else if (paramValue instanceof Boolean bool){
-            return bool ? "1" : "0";
+            sqlBuilder.append(bool ? "1" : "0");
+        }else{
+            // TODO: 2024/10/16 日期类型
+            sqlBuilder.append(paramValue.toString());
         }
-        // TODO: 2024/10/16 日期类型
-        return paramValue.toString();
     }
 
     /**

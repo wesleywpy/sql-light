@@ -104,8 +104,12 @@ public class DefaultSqlLight implements SqlLight {
         SqlDataset parentDataset = queryParam.parentDataset;
         String mainSql = queryParam.getSql();
         try {
-            List<Entity> dsList = SqlExecutor.query(queryParam.coon, mainSql, new EntityListHandler(), queryParam.paramList.toArray());
-            System.out.println(dsList.size());
+            List<Entity> dsList;
+            if (Objects.isNull(queryParam.primaryValue)) {
+                dsList = SqlExecutor.query(queryParam.coon, mainSql, new EntityListHandler());
+            }else {
+                dsList = SqlExecutor.query(queryParam.coon, mainSql, new EntityListHandler(), queryParam.primaryValue);
+            }
             SqlDatasetResult result = new SqlDatasetResult();
             result.setName(parentDataset.getName());
             if (CollUtil.isNotEmpty(dsList)) {
@@ -120,32 +124,49 @@ public class DefaultSqlLight implements SqlLight {
             if (CollUtil.isEmpty(subDatasets) || CollUtil.isEmpty(dsList)) {
                 return;
             }
-            Entity entity = dsList.get(0);
             for (SqlDataset subDataset : subDatasets) {
-                List<Object> dependValues = dsList.stream().map(e -> e.get(subDataset.getDependKey()))
-                                                  .filter(Objects::nonNull).distinct().toList();
-                if (!dependValues.isEmpty()){
-                    DatasetQueryParam subParam = new DatasetQueryParam(queryParam.coon, subDataset, dependValues.get(0));
-                    subParam.paramMap = queryParam.paramMap;
-                    query(subParam, resultMap);
-                }
+                DatasetQueryParam subParam = new DatasetQueryParam(queryParam.coon, subDataset, null);
+                subParam.paramMap = flatEntity(dsList, subDataset.getDependKey());
+                subParam.paramMap.putAll(queryParam.paramMap);
+                query(subParam, resultMap);
             }
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private static class DatasetQueryParam {
+    /**
+     *
+     * @param entities 查询结果
+     * @param dependKey 依赖的字段名
+     */
+    private Map<String, Object> flatEntity(List<Entity> entities, String dependKey){
+        if (CollUtil.isEmpty(entities) || Objects.isNull(dependKey) || dependKey.isBlank()) {
+            return Collections.emptyMap();
+        }
+        if (entities.size() == 1) {
+            return entities.get(0);
+        }
+        Set<String> dependSet = new HashSet<>(Arrays.asList(dependKey.split(",")));
+        Set<String> keySet = entities.get(0).keySet().stream().filter(dependSet::contains).collect(Collectors.toSet());
+
+        Map<String, Object> result = new HashMap<>(keySet.size());
+        for (String key : keySet) {
+            result.put(key, entities.stream().map(e -> e.get(key)).distinct().toArray());
+        }
+        return result;
+    }
+
+    protected static class DatasetQueryParam {
         final Connection coon;
         final SqlDataset parentDataset;
-        final List<Object> paramList = new ArrayList<>();
+        final Object primaryValue;
         Map<String, Object> paramMap;
-
 
         public DatasetQueryParam(Connection coon, SqlDataset parentDataset, Object primaryValue) {
             this.coon = coon;
+            this.primaryValue = primaryValue;
             this.parentDataset = parentDataset;
-            this.paramList.add(primaryValue);
         }
 
         String getSql() {
@@ -153,7 +174,6 @@ public class DefaultSqlLight implements SqlLight {
             if (Objects.isNull(paramMap) || paramMap.isEmpty()) {
                 return mainSql;
             }
-            // TODO: 2024/10/16 处理paramList多个值情况
             final SqlNamedParam namedSql = new SqlNamedParam(mainSql, paramMap);
             return namedSql.getSql();
         }
